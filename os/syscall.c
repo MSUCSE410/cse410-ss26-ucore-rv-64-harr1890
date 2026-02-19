@@ -39,13 +39,29 @@ uint64 sys_gettimeofday(TimeVal *val, int _tz)
 /*
 * LAB1: you may need to define sys_task_info here
 */
+uint64 sys_task_info(struct TaskInfo *ti) {
+    struct proc *p = curr_proc();
+    
+    ti->status = 1; 
+
+    for(int i = 0; i < 500; i++) {
+        ti->syscall_times[i] = p->syscall_counters[i];
+    }
+    
+    uint64 current_cycle = get_cycle();
+    ti->time = (int)((current_cycle - p->start_time) / (CPU_FREQ / 1000));
+    
+    return 0;
+}
 
 extern char trap_page[];
 
 void syscall()
 {
+	struct proc *p = curr_proc();
 	struct trapframe *trapframe = curr_proc()->trapframe;
-	int id = trapframe->a7, ret;
+	int id = trapframe->a7;
+	int ret = -1;
 	uint64 args[6] = { trapframe->a0, trapframe->a1, trapframe->a2,
 			   trapframe->a3, trapframe->a4, trapframe->a5 };
 	tracef("syscall %d args = [%x, %x, %x, %x, %x, %x]", id, args[0],
@@ -53,6 +69,9 @@ void syscall()
 	/*
 	* LAB1: you may need to update syscall counter for task info here
 	*/
+	if (id >= 0 && id < 500) {
+        p->syscall_counters[id]++;
+    }
 	switch (id) {
 	case SYS_write:
 		ret = sys_write(args[0], (char *)args[1], args[2]);
@@ -69,6 +88,9 @@ void syscall()
 	/*
 	* LAB1: you may need to add SYS_taskinfo case here
 	*/
+	case 410: // syscall ID for sys_task_info [cite: 1456]
+            trapframe->a0 = sys_task_info((struct TaskInfo *)args[0]);
+            break;
 	default:
 		ret = -1;
 		errorf("unknown syscall %d", id);

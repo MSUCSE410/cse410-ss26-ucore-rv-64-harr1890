@@ -62,6 +62,10 @@ struct proc *allocproc(void)
 found:
 	p->pid = allocpid();
 	p->state = USED;
+
+	memset(p->syscall_counters, 0, sizeof(p->syscall_counters));
+    p->start_time = 0;
+	
 	memset(&p->context, 0, sizeof(p->context));
 	memset(p->trapframe, 0, PAGE_SIZE);
 	memset((void *)p->kstack, 0, PAGE_SIZE);

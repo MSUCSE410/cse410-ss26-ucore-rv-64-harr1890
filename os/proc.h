@@ -38,11 +38,21 @@ struct proc {
 	/*
 	* LAB1: you may need to add some new fields here
 	*/
+	unsigned int syscall_counters[500];
+	uint64 start_time;
 };
 
 /*
 * LAB1: you may need to define struct for TaskInfo here
 */
+
+typedef enum { TaskRunning, TaskRunnable, TaskUnused } TaskStatus;
+
+struct TaskInfo {
+    int status;                      
+    unsigned int syscall_times[500];  
+    int time;                         
+};
 
 struct proc *curr_proc();
 void exit(int);
