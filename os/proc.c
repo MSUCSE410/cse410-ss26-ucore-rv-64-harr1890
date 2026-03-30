@@ -2,7 +2,6 @@
 #include "defs.h"
 #include "loader.h"
 #include "trap.h"
-#include "timer.h"
 
 struct proc pool[NPROC];
 char kstack[NPROC][PAGE_SIZE];
@@ -35,9 +34,6 @@ void proc_init(void)
 		/*
 		* LAB1: you may need to initialize your new fields of proc here
 		*/
-		memset(p->syscall_counters, 0, sizeof(p->syscall_counters));
-		p->start_time = 0;
-		p->start_time_set = 0;
 	}
 	idle.kstack = (uint64)boot_stack_top;
 	idle.pid = 0;
@@ -69,7 +65,6 @@ found:
 
 	memset(p->syscall_counters, 0, sizeof(p->syscall_counters));
     p->start_time = 0;
-	p->start_time_set = 0;
 	
 	memset(&p->context, 0, sizeof(p->context));
 	memset(p->trapframe, 0, PAGE_SIZE);
@@ -93,10 +88,6 @@ void scheduler(void)
 				/*
 				* LAB1: you may need to init proc start time here
 				*/
-				if (!p->start_time_set) {
-					p->start_time = get_cycle() / (CPU_FREQ / 1000);
-					p->start_time_set = 1;
-				}
 				p->state = RUNNING;
 				current_proc = p;
 				swtch(&idle.context, &p->context);
