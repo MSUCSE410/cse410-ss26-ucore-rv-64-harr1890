@@ -15,6 +15,8 @@ void main()
 {
 	clean_bss();
 	proc_init();
+	kinit();
+	kvm_init();
 	loader_init();
 	trap_init();
 	timer_init();
