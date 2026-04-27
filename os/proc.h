@@ -44,6 +44,9 @@ struct proc {
 	uint64 max_page;
 	struct proc *parent; // Parent process
 	uint64 exit_code;
+	uint64 priority;
+	uint64 stride;
+	uint64 pass;
 	struct file *files[FD_BUFFER_SIZE];
 };
 
@@ -57,6 +60,8 @@ void yield();
 int fork();
 int exec(char *);
 int wait(int, int *);
+int spawn(char *);
+int setpriority(long long);
 void add_task(struct proc *);
 struct proc *pop_task();
 struct proc *allocproc();

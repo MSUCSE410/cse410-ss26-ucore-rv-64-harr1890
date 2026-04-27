@@ -5,6 +5,9 @@
 #include "vm.h"
 #include "queue.h"
 
+#define DEFAULT_PRIORITY 16ULL
+#define BIG_STRIDE 65536ULL
+
 struct proc pool[NPROC];
 __attribute__((aligned(16))) char kstack[NPROC][PAGE_SIZE];
 __attribute__((aligned(4096))) char trapframe[NPROC][TRAP_PAGE_SIZE];
@@ -13,6 +16,12 @@ extern char boot_stack_top[];
 struct proc *current_proc;
 struct proc idle;
 struct queue task_queue;
+
+static uint64 stride_pass(uint64 priority)
+{
+	uint64 pass = BIG_STRIDE / priority;
+	return pass == 0 ? 1 : pass;
+}
 
 int threadid()
 {
@@ -32,6 +41,9 @@ void proc_init()
 		p->state = UNUSED;
 		p->kstack = (uint64)kstack[p - pool];
 		p->trapframe = (struct trapframe *)trapframe[p - pool];
+		p->priority = DEFAULT_PRIORITY;
+		p->stride = 0;
+		p->pass = stride_pass(DEFAULT_PRIORITY);
 	}
 	idle.kstack = (uint64)boot_stack_top;
 	idle.pid = IDLE_PID;
@@ -47,19 +59,28 @@ int allocpid()
 
 struct proc *fetch_task()
 {
-	int index = pop_queue(&task_queue);
-	if (index < 0) {
+	struct proc *best = NULL;
+
+	for (struct proc *p = pool; p < &pool[NPROC]; p++) {
+		if (p->state != RUNNABLE)
+			continue;
+		if (best == NULL || p->stride < best->stride ||
+		    (p->stride == best->stride && p->pid < best->pid)) {
+			best = p;
+		}
+	}
+	if (best == NULL) {
 		debugf("No task to fetch\n");
 		return NULL;
 	}
-	debugf("fetch task %d(pid=%d) to task queue\n", index, pool[index].pid);
-	return pool + index;
+	best->stride += best->pass;
+	debugf("fetch task %d(pid=%d)\n", best - pool, best->pid);
+	return best;
 }
 
 void add_task(struct proc *p)
 {
-	push_queue(&task_queue, p - pool);
-	debugf("add task %d(pid=%d) to task queue\n", p - pool, p->pid);
+	(void)p;
 }
 
 // Look in the process table for an UNUSED proc.
@@ -83,6 +104,9 @@ found:
 	p->max_page = 0;
 	p->parent = NULL;
 	p->exit_code = 0;
+	p->priority = DEFAULT_PRIORITY;
+	p->stride = 0;
+	p->pass = stride_pass(DEFAULT_PRIORITY);
 	p->pagetable = uvmcreate((uint64)p->trapframe);
 	memset(&p->context, 0, sizeof(p->context));
 	memset((void *)p->kstack, 0, KSTACK_SIZE);
@@ -122,6 +146,7 @@ void scheduler()
 		p->state = RUNNING;
 		current_proc = p;
 		swtch(&idle.context, &p->context);
+		current_proc = &idle;
 	}
 }
 
@@ -171,11 +196,12 @@ int fork()
 	struct proc *p = curr_proc();
 	// Allocate process.
 	if ((np = allocproc()) == 0) {
-		panic("allocproc\n");
+		return -1;
 	}
 	// Copy user memory from parent to child.
 	if (uvmcopy(p->pagetable, np->pagetable, p->max_page) < 0) {
-		panic("uvmcopy\n");
+		freeproc(np);
+		return -1;
 	}
 	np->max_page = p->max_page;
 	// copy saved user registers.
@@ -186,6 +212,36 @@ int fork()
 	np->state = RUNNABLE;
 	add_task(np);
 	return np->pid;
+}
+
+int spawn(char *name)
+{
+	int id = get_id_by_name(name);
+	struct proc *np;
+
+	if (id < 0)
+		return -1;
+	if ((np = allocproc()) == 0)
+		return -1;
+	if (loader(id, np) < 0) {
+		freeproc(np);
+		return -1;
+	}
+	np->parent = curr_proc();
+	np->state = RUNNABLE;
+	add_task(np);
+	return np->pid;
+}
+
+int setpriority(long long prio)
+{
+	struct proc *p = curr_proc();
+
+	if (prio < 2)
+		return -1;
+	p->priority = (uint64)prio;
+	p->pass = stride_pass(p->priority);
+	return (int)prio;
 }
 
 int exec(char *name)
@@ -215,9 +271,11 @@ int wait(int pid, int *code)
 				havekids = 1;
 				if (np->state == ZOMBIE) {
 					// Found one.
-					np->state = UNUSED;
 					pid = np->pid;
-					*code = np->exit_code;
+					if (code != NULL)
+						*code = np->exit_code;
+					np->parent = NULL;
+					np->state = UNUSED;
 					return pid;
 				}
 			}
@@ -225,8 +283,7 @@ int wait(int pid, int *code)
 		if (!havekids) {
 			return -1;
 		}
-		p->state = RUNNABLE;
-		add_task(p);
+		p->state = SLEEPING;
 		sched();
 	}
 }
@@ -235,12 +292,17 @@ int wait(int pid, int *code)
 void exit(int code)
 {
 	struct proc *p = curr_proc();
+	struct proc *parent = p->parent;
 	p->exit_code = code;
 	debugf("proc %d exit with %d\n", p->pid, code);
 	freeproc(p);
-	if (p->parent != NULL) {
+	if (parent != NULL) {
 		// Parent should `wait`
 		p->state = ZOMBIE;
+		if (parent->state == SLEEPING) {
+			parent->state = RUNNABLE;
+			add_task(parent);
+		}
 	}
 	// Set the `parent` of all children to NULL
 	struct proc *np;
